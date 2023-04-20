@@ -154,7 +154,7 @@ class PydMagics(Magics):
             pyd_dub_json['sourceFiles'] = [pyd_file]
             pyd_dub_json['targetType'] = 'dynamicLibrary'
             pyd_dub_json['dflags'] = []
-            pyd_dub_json['libs'] = ['phobos2-ldc']
+            pyd_dub_json['libs'] = ['phobos2']
             pyd_dub_json['versions'] = ['PydPythonExtension']
 
             with io.open(pyd_dub_file, 'w', encoding='utf-8') as f:
@@ -164,7 +164,7 @@ class PydMagics(Magics):
             except:
                 pass
 
-            dub_desc = json.loads(subprocess.check_output(["dub", "describe", "--root=" + lib_dir], universal_newlines = True))
+            dub_desc = json.loads(subprocess.check_output(['bash', '-c', 'source ~/dlang/dmd-2.103.0/activate && dub describe --root=' + lib_dir], universal_newlines = True))
             for pack in dub_desc['packages']:
                 if pack['name'] == 'pyd':
                     _infraDir = os.path.join(pack['path'], 'infrastructure')
@@ -183,7 +183,7 @@ class PydMagics(Magics):
             if args.compiler == 'dmd':
                 so_ctor_path = os.path.join(_infraDir, 'd', 'so_ctor.c')
                 so_ctor_object_path = os.path.join(lib_dir, "so_ctor.o")
-                subprocess.check_call(['cc', "-c", "-fPIC", "-o" + so_ctor_object_path, so_ctor_path])
+                subprocess.check_call(['bash', '-c', 'source ~/dlang/dmd-2.103.0/activate && cc -c -fPIC -o' + so_ctor_object_path + ' ' + so_ctor_path])
                 pyd_dub_json['sourceFiles'].append(so_ctor_object_path)
 
             mainTemplate = os.path.join(_infraDir, 'd', 'pydmain_template.d')
@@ -198,10 +198,10 @@ class PydMagics(Magics):
             pyd_dub_json.merge(args.dub_config)
 
             with io.open(pyd_dub_file, 'w', encoding='utf-8') as f:
-                f.write(unicode(json.dumps(pyd_dub_json)+'\n', encoding='utf-8'))
+                f.write(json.dumps(pyd_dub_json)+'\n')
 
             try:
-                output = subprocess.check_output(["dub", "build", "--root=" + lib_dir] + args.dub_args.split(' '),
+                output = subprocess.check_output(['bash', '-c', 'source ~/dlang/dmd-2.103.0/activate && dub build --root=' + lib_dir + ' ' + args.dub_args],
                         universal_newlines=True, stderr=subprocess.STDOUT)
             except (subprocess.CalledProcessError) as e:
                 print(e.output)
