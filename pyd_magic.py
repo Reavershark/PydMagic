@@ -88,7 +88,8 @@ class PydMagics(Magics):
     def pyd(self, line, cell):
         
         args = magic_arguments.parse_argstring(self.pyd, line)
-        code = 'import ppyd;\n\n\
+        code = 'import ppyd;\n\
+                import std.meta : Alias;\n\n\
                 extern(C) void PydMain()\n{\n   \
                 registerAll!(Alias!(__traits(parent, PydMain)))();\n\
                 }\n\n'\
@@ -152,12 +153,12 @@ class PydMagics(Magics):
             pyd_dub_json['subConfigurations'] = { "pyd": "python{0}{1}".format(sys.version_info.major, sys.version_info.minor) }
             pyd_dub_json['sourceFiles'] = [pyd_file]
             pyd_dub_json['targetType'] = 'dynamicLibrary'
-            pyd_dub_json['dflags'] = ['-fPIC']
-            pyd_dub_json['libs'] = ['phobos2']
+            pyd_dub_json['dflags'] = []
+            pyd_dub_json['libs'] = ['phobos2-ldc']
             pyd_dub_json['versions'] = ['PydPythonExtension']
 
             with io.open(pyd_dub_file, 'w', encoding='utf-8') as f:
-                f.write(unicode(json.dumps(pyd_dub_json)+'\n', encoding='utf-8'))
+                f.write(json.dumps(pyd_dub_json)+'\n')
             try:
                 os.remove(pyd_dub_selections_file)
             except:
