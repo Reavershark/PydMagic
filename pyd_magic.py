@@ -95,18 +95,18 @@ class PydMagics(Magics):
         # Construct a single d source code file
         def construct_d_source_code() -> str:
             d_code = """
-                import ppyd;
+import ppyd;
 
-                extern(C) void PydMain()
-                {
-                    import std.meta : Alias;
-                    registerAll!(Alias!(__traits(parent, PydMain)))();
-                }
+extern(C) void PydMain()
+{
+    import std.meta : Alias;
+    registerAll!(Alias!(__traits(parent, PydMain)))();
+}
 
-            """
+"""
             d_code += cell
 
-            if not code.endswith('\n'):
+            if not d_code.endswith('\n'):
                 d_code + '\n'
 
             return d_code
@@ -180,7 +180,7 @@ class PydMagics(Magics):
             so_ext = '.dll'
         else:
             so_ext = '.so' #might have to go to dylib on OS X at some point???
-        module_path = os.path.join(module_path, 'lib' + module_name + so_ext)
+        module_path = os.path.join(module_dir, 'lib' + module_name + so_ext)
 
         was_already_built = os.path.isfile(module_path)
 
@@ -188,8 +188,10 @@ class PydMagics(Magics):
             # Unused
             d_include_dirs = args.include
 
+            pyd_file = ""
+
             def write_source_code_file() -> None:
-                pyd_file = os.path.join(module_dir, module_name + '.d')
+                pyd_file = os.path.join(module_dir, f'{module_name}.d')
                 with open(pyd_file, 'w', encoding='utf-8') as f:
                     f.write(d_code)
 
@@ -198,19 +200,19 @@ class PydMagics(Magics):
                 pyd_dub_json['name'] = module_name
                 pyd_dub_json['dependencies'] = { "pyd": args.pyd_version, "ppyd": ">=0.1.3" }
                 pyd_dub_json['subConfigurations'] = { "pyd": f"python{sys.version_info.major}{sys.version_info.minor}" }
-                pyd_dub_json['sourceFiles'] = [pyd_file]
+                pyd_dub_json['sourceFiles'] = [f'{module_name}.d']
                 pyd_dub_json['targetType'] = 'dynamicLibrary'
-                pyd_dub_json['dflags-dmd'] = ['-fPIC']
-                pyd_dub_json['dflags-ldc'] = ['--relocation-model=pic']
+                #pyd_dub_json['dflags-dmd'] = ['-fPIC']
+                #pyd_dub_json['dflags-ldc'] = ['--relocation-model=pic']
                 pyd_dub_json['libs'] = []
                 pyd_dub_json['versions'] = ['PydPythonExtension']
                 return pyd_dub_json
 
-            def write_dub_json(json: dict) -> None:
+            def write_dub_json(json_val: dict) -> None:
                 pyd_dub_file = os.path.join(module_dir, 'dub.json')
 
                 with open(pyd_dub_file, 'w', encoding='utf-8') as f:
-                    f.write(json.dumps(pyd_dub_json) + '\n')
+                    f.write(json.dumps(json_val) + '\n')
 
             def remove_sub_selections_json() -> None:
                 pyd_dub_selections_file = os.path.join(module_dir, 'dub.selections.json')
@@ -238,7 +240,7 @@ class PydMagics(Magics):
                 else:
                     boilerplate_file_name = 'python_so_linux_boilerplate.d'
                 boilerplate_file_path = os.path.join(pyd_infrastructure_path, 'd', boilerplate_file_name)
-                pyd_dub_json['sourceFiles'].append(boilerplatePath)
+                pyd_dub_json['sourceFiles'].append(boilerplate_file_path)
 
                 if args.compiler == 'dmd':
                     so_ctor_path = os.path.join(pyd_infrastructure_path, 'd', 'so_ctor.c')
@@ -272,7 +274,7 @@ class PydMagics(Magics):
             build_module()
 
         if not was_already_built:
-            self._code_cache[key] = module_name
+            self._code_cache[tuple_unique_to_this_config] = module_name
 
         # Import the module
         module_spec = importlib.util.spec_from_file_location(module_name, module_path)
