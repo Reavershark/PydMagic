@@ -2,28 +2,18 @@ import sys
 if sys.version_info[0] < 3:
     raise ImportError('Only python 3+ is supported.')
 
+import hashlib
+import importlib.util
+import json
+import os
+import subprocess
+import time
+
 from IPython.core import magic_arguments
 from IPython.core.magic import cell_magic, magics_class, Magics
 from IPython.utils.path import get_ipython_cache_dir
-from IPython.utils import py3compat
-import os
-import io
-import time
-import importlib.util
-import json
-import subprocess
-import shutil
-import ast
 
 from mergedict import ConfigDict
-
-try:
-    import hashlib
-except ImportError:
-    import md5 as hashlib
-
-from distutils.core import Distribution
-from distutils.command.build_ext import build_ext
 
 import pyd.support
 
@@ -45,24 +35,9 @@ class PydMagics(Magics):
         help="Specify a name for the Pyd module."
     )
     @magic_arguments.argument(
-        '-I', '--include', action='append', default=[],
-        help="Add a path to the list of include directories (can be specified "
-             "multiple times)."
-    )
-    @magic_arguments.argument(
         '-f', '--force', action='store_true', default=False,
         help="Force the compilation of a new module, even if the source has been "
              "previously compiled."
-    )
-    @magic_arguments.argument(
-        '--compiler', action='store', default='dmd',
-        help="Specify the D compiler to be used. Default is dmd"
-    )
-    @magic_arguments.argument(
-        '--compiler_type', action='store', default='dmd',
-        help="Specify the compiler type, as in dmd, gdc, ldc or sdc. Needed if "
-             "you are using a non-standard compiler name e.g. dmd_HEAD for your"
-             "own personal build of dmd from git master HEAD"
     )
     @magic_arguments.argument(
         '--pyd_version', action='store', default='>=0.9.7',
@@ -147,6 +122,21 @@ extern(C) void PydMain()
             else:
                 return "_pyd_magic_" + hashlib.md5(str(tuple_unique_to_this_config).encode('utf-8')).hexdigest()
 
+        # Choose and create the module dir (build folder)
+        def get_and_create_module_dir(module_name: str) -> str:
+            module_dir = os.path.join(get_ipython_cache_dir(), 'pyd', module_name)
+            if not os.path.exists(module_dir):
+                os.makedirs(module_dir)
+            return module_dir
+
+        # Choose the path of the dynamic library to be built
+        def get_module_so_path(module_dir: str) -> str:
+            if os.name == 'nt':
+                so_ext = '.dll'
+            else:
+                so_ext = '.so' #might have to go to dylib on OS X at some point???
+            return os.path.join(module_dir, 'lib' + module_name + so_ext)
+
         # Used for choosing the name of the module/build folder by hashing the tuple
         tuple_unique_to_this_config = ()
 
@@ -169,27 +159,12 @@ extern(C) void PydMain()
             tuple_unique_to_this_config += (time.time(),)
 
         module_name = get_module_name_from_config_tuple(tuple_unique_to_this_config)
-
-        # Choose and create the module dir (build folder)
-        module_dir = os.path.join(get_ipython_cache_dir(), 'pyd', module_name)
-        if not os.path.exists(module_dir):
-            os.makedirs(module_dir)
-
-        # Choose the path of the dynamic library to be built
-        if os.name == 'nt':
-            so_ext = '.dll'
-        else:
-            so_ext = '.so' #might have to go to dylib on OS X at some point???
-        module_path = os.path.join(module_dir, 'lib' + module_name + so_ext)
+        module_dir = get_and_create_module_dir(module_name=module_name)
+        module_path = get_module_so_path(module_dir=module_dir)
 
         was_already_built = os.path.isfile(module_path)
 
         if not was_already_built: # Build module
-            # Unused
-            d_include_dirs = args.include
-
-            pyd_file = ""
-
             def write_source_code_file() -> None:
                 pyd_file = os.path.join(module_dir, f'{module_name}.d')
                 with open(pyd_file, 'w', encoding='utf-8') as f:
@@ -226,33 +201,46 @@ extern(C) void PydMain()
             write_dub_json(generate_dub_json_basic())
             remove_sub_selections_json()
 
-            def generate_dub_json_extended() -> dict:
-                pyd_dub_json = generate_dub_json_basic()
-
+            def get_pyd_infrastructure_path() -> str:
                 dub_desc = json.loads(subprocess.check_output(['dub', 'describe', f'--root={module_dir}'], universal_newlines = True))
                 for package in dub_desc['packages']:
                     if package['name'] == 'pyd':
-                        pyd_infrastructure_path = os.path.join(package['path'], 'infrastructure')
-                        break
+                        return os.path.join(package['path'], 'infrastructure')
+                raise Exception("Package pyd not found in dub describe output")
 
+            def get_boilerplate_source_file(pyd_infrastructure_path: str) -> str:
                 if os.name == 'nt':
                     boilerplate_file_name = 'python_dll_windows_boilerplate.d'
                 else:
                     boilerplate_file_name = 'python_so_linux_boilerplate.d'
-                boilerplate_file_path = os.path.join(pyd_infrastructure_path, 'd', boilerplate_file_name)
-                pyd_dub_json['sourceFiles'].append(boilerplate_file_path)
+                return os.path.join(pyd_infrastructure_path, 'd', boilerplate_file_name)
 
-                if args.compiler == 'dmd':
-                    so_ctor_path = os.path.join(pyd_infrastructure_path, 'd', 'so_ctor.c')
-                    so_ctor_object_path = os.path.join(module_dir, "so_ctor.o")
-                    subprocess.check_call(['cc', '-c', '-fPIC', '-o', so_ctor_object_path, so_ctor_path])
-                    pyd_dub_json['sourceFiles'].append(so_ctor_object_path)
+            def generate_pydmain_source_file(pyd_infrastructure_path: str) -> str:
+                template = os.path.join(pyd_infrastructure_path, 'd', 'pydmain_template.d')
+                template_out = os.path.join(module_dir, 'pydmain.d')
+                with open(template, 'r', encoding='utf-8') as infile, open(template_out, 'w', encoding='utf-8') as outfile:
+                    outfile.write(infile.read() % {'modulename' : module_name})
+                return template_out
 
-                mainTemplate = os.path.join(pyd_infrastructure_path, 'd', 'pydmain_template.d')
-                mainTemplateOut = os.path.join(module_dir, 'pydmain.d')
-                with open(mainTemplate, 'r', encoding='utf-8') as t, open(mainTemplateOut, 'w', encoding='utf-8') as m:
-                    m.write(t.read() % {'modulename' : module_name})
-                pyd_dub_json['sourceFiles'].append(mainTemplateOut)
+            def generate_so_ctor_object_file(pyd_infrastructure_path: str) -> str:
+                so_ctor_source_file_path = os.path.join(pyd_infrastructure_path, 'd', 'so_ctor.c')
+                so_ctor_object_file_path = os.path.join(module_dir, "so_ctor.o")
+                subprocess.check_call(['cc', '-c', '-fPIC', '-o', so_ctor_object_file_path, so_ctor_source_file_path])
+                return so_ctor_object_file_path
+
+            def generate_dub_json_extended() -> ConfigDict:
+                pyd_dub_json = generate_dub_json_basic()
+
+                pyd_infrastructure_path = get_pyd_infrastructure_path()
+
+                boilerplate_source_file_path = get_boilerplate_source_file(pyd_infrastructure_path=pyd_infrastructure_path)
+                pyd_dub_json['sourceFiles'].append(boilerplate_source_file_path)
+
+                so_ctor_object_file_path = generate_so_ctor_object_file(pyd_infrastructure_path=pyd_infrastructure_path)
+                pyd_dub_json['sourceFiles'].append(so_ctor_object_file_path)
+
+                pydmain_source_file_path = generate_pydmain_source_file(pyd_infrastructure_path=pyd_infrastructure_path)
+                pyd_dub_json['sourceFiles'].append(pydmain_source_file_path)
 
                 pyd_dub_json = ConfigDict(pyd_dub_json)
                 pyd_dub_json.merge(args.dub_config)
@@ -263,12 +251,16 @@ extern(C) void PydMain()
 
             def build_module() -> None:
                 try:
-                    output = subprocess.check_output(['dub', 'build', f'--root={module_dir}', *args.dub_args.split(None)],
-                            universal_newlines=True, stderr=subprocess.STDOUT)
+                    output = subprocess.check_output(
+                        ['dub', 'build', f'--root={module_dir}', *args.dub_args.split(None)],
+                        universal_newlines=True, stderr=subprocess.STDOUT
+                    )
                 except (subprocess.CalledProcessError) as e:
+                    print('Error encountered while building:')
                     print(e.output)
                     raise e
                 if args.print_compiler_output:
+                    print('Build output:')
                     print(output)
 
             build_module()
