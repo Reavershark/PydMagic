@@ -70,7 +70,9 @@ class PydMagics(Magics):
         # Construct a single d source code file
         def construct_d_source_code() -> str:
             d_code = """
-import ppyd;
+import pyd.pyd; // Imports everything in pyd except pyd.embedded
+import pyd.embedded;
+import ppyd; // For @pdef
 
 extern(C) void PydMain()
 {
