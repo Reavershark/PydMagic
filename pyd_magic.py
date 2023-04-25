@@ -2,6 +2,7 @@ import sys
 if sys.version_info[0] < 3:
     raise ImportError('Only python 3+ is supported.')
 
+import ast
 import hashlib
 import importlib.util
 import json
